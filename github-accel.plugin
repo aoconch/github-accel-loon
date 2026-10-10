@@ -34,10 +34,10 @@
 
 [Script]
 # ① 定时测速（也可在 Loon「脚本」页手动点运行）
-cron "0 */6 * * *" script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/__SHA__/github-accel-speedtest.js, tag=GitHub加速节点测速, timeout=300, enable=true
+cron "0 */6 * * *" script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/3d880aa65538be8576f2a5066480f337cfd51799/github-accel-speedtest.js, tag=GitHub加速节点测速, timeout=300, enable=true
 
 # ② 请求改写：命中才改写，其余全部放行
-http-request ^https:\/\/github\.com\/.+\/(releases|archive|raw)\/|^https:\/\/raw\.githubusercontent\.com\/|^https:\/\/codeload\.github\.com\/|^https:\/\/gist\.githubusercontent\.com\/ script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/__SHA__/github-accel-rewrite.js, requires-body=false, timeout=10, tag=GitHub下载加速, enable=true
+http-request ^https:\/\/github\.com\/.+\/(releases|archive|raw)\/|^https:\/\/raw\.githubusercontent\.com\/|^https:\/\/codeload\.github\.com\/|^https:\/\/gist\.githubusercontent\.com\/ script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/3d880aa65538be8576f2a5066480f337cfd51799/github-accel-rewrite.js, requires-body=false, timeout=10, tag=GitHub下载加速, enable=true
 
 [Mitm]
 # HTTPS 改写必须先解密；%APPEND% 表示追加到现有 MITM 列表
