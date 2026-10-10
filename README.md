@@ -79,9 +79,30 @@ https://gh.dpik.top/https://github.com/pypa/pip/archive/refs/tags/24.3.1.zip
 
 ## 工作原理
 
+### 数据来源（akams 逆向结论）
+
+`github.akams.cn` 是 Next.js 静态站，**没有开放 API**。节点列表硬编码在 `/_next/static/chunks/*.js` 里，脚本用两级正则拿：
+
+```
+1) 首页 HTML  →  /_next/static/chunks/([A-Za-z0-9_\-]+)\.js/g   取出 chunk 列表
+2) 各 chunk   →  /label:"(contribute|search)",value:"([^"]+)"/g  取出节点
+```
+
+站点规则：`contribute` = 网友贡献节点，`search` = 测绘节点。**实测 81 个（contribute 50 + search 31），其中 1 个 IDN 域名需要过滤。**
+
+加速格式是**路径前缀式**：
+
+```
+https://<节点域名>/https://github.com/pypa/pip/archive/refs/tags/24.3.1.zip
+```
+
+> 站点自身也是这么测的：用 `<img>` 加载 `https://<节点>/https://raw.githubusercontent.com/…/code.png` 量延迟，用 fetch 拉 release 文件算 Mbps。本插件沿用同一套方法。
+
+### 流程
+
 ```
 ① cron（每 6h）
-   akams 首页 → 抓 _next chunk → 正则提节点列表（label:"contribute|search",value:"域名"）
+   akams 首页 → 抓 _next chunk → 正则提节点列表
         ↓
    并发 8 测延迟（超时 3s，用 raw 小图）
         ↓
