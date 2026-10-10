@@ -27,11 +27,13 @@ echo "[*] 当前账号：$USER"
 [ -f "$PLUGIN" ] || { echo "✗ 当前目录找不到 $PLUGIN"; exit 1; }
 
 # ---- 1. 把已固定的 SHA 还原成占位符（保证反复重跑结果正确）----
+# 注意：不用 sed -i / perl -i —— 它们靠「临时文件 + rename」实现，
+#       在部分环境（含本机 IDE 的文件代理）会被拦截；这里一律用「截断重写」。
 if grep -q '__SHA__' "$PLUGIN"; then
   echo "[*] 插件中已是占位符 __SHA__"
 else
-  sed -i.bak -E 's#(raw\.githubusercontent\.com/[^/]+/[^/]+/)[0-9a-f]{7,40}(/)#\1__SHA__\2#g' "$PLUGIN"
-  rm -f "$PLUGIN.bak"
+  _restored=$(sed -E 's#(raw\.githubusercontent\.com/[^/]+/[^/]+/)[0-9a-f]{7,40}(/)#\1__SHA__\2#g' "$PLUGIN")
+  printf '%s\n' "$_restored" > "$PLUGIN"
   echo "[*] 已把旧的固定 SHA 还原成 __SHA__"
 fi
 
@@ -54,8 +56,8 @@ SHA=$(git rev-parse HEAD)
 echo "[*] 固定脚本版本 SHA = $SHA"
 
 # ---- 4. 用不可变 SHA 渲染插件 ----
-sed -i.bak "s/__SHA__/$SHA/g" "$PLUGIN"
-rm -f "$PLUGIN.bak"
+_rendered=$(sed "s/__SHA__/$SHA/g" "$PLUGIN")
+printf '%s\n' "$_rendered" > "$PLUGIN"
 git add "$PLUGIN"
 if ! git diff --cached --quiet; then
   git commit -qm "plugin: pin script-path -> $SHA"
