@@ -1,0 +1,44 @@
+#!name = GitHub 下载加速（akams 自动择优）
+#!desc = 定时从 github.akams.cn 的加速节点列表测速，自动挑出最快的节点，并把 GitHub 的 Releases / Archive / Raw / Codeload 下载链接改写到该节点。只碰「纯下载」路径，登录 / 网页 / API 一律放行；需开启 MITM 并信任 Loon 证书。首次安装后请先手动运行一次测速脚本。
+#!author = aoconch
+#!homepage = https://github.com/aoconch/github-accel-loon
+#!tag = 加速, GitHub, 下载, 工具
+#!type = normal
+
+# ============================================================
+# 设计说明
+# ------------------------------------------------------------
+# ① github-accel-speedtest.js —— cron：每 6h 跑一次
+#      akams 首页 → 正则提取 _next chunk 里的节点列表 → 并发测延迟
+#      → Top4 真实文件下载测速 → 最优节点写入本地存储 gh_accel_best
+# ② github-accel-rewrite.js —— http-request：只命中下载类 URL
+#      https://github.com/o/r/releases/download/v1/a.zip
+#   →  https://<最优节点>/https://github.com/o/r/releases/download/v1/a.zip
+#      并用 node 参数强制该请求走 DIRECT（加速节点多为国内/近岸 CDN）
+#
+# 两个脚本只通过 Loon 本地存储通信，无任何服务端依赖。
+#
+# script-path 固定在具体 commit SHA（不是 main）：
+#   raw.githubusercontent.com / jsDelivr 对 main 分支有 CDN 缓存，
+#   用 main 会出现「脚本改了但 Loon 还在跑旧版」的静默问题。
+#   改完 JS 后重跑 deploy.sh 会自动重新固定 SHA。
+# ============================================================
+
+# —— 可填配置项（留空则用脚本内置默认值）——
+# remoteList  : true/false，是否实时同步 akams 节点列表（失败自动回落内置快照）
+# speedCount  : 进入真实下载测速的节点数，默认 4
+# nodePolicy  : 改写后的请求走哪个策略/节点，默认 DIRECT
+#!input = remoteList
+#!input = speedCount
+#!input = nodePolicy
+
+[Script]
+# ① 定时测速（也可在 Loon「脚本」页手动点运行）
+cron "0 */6 * * *" script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/__SHA__/github-accel-speedtest.js, tag=GitHub加速节点测速, timeout=300, enable=true
+
+# ② 请求改写：命中才改写，其余全部放行
+http-request ^https:\/\/github\.com\/.+\/(releases|archive|raw)\/|^https:\/\/raw\.githubusercontent\.com\/|^https:\/\/codeload\.github\.com\/|^https:\/\/gist\.githubusercontent\.com\/ script-path=https://raw.githubusercontent.com/aoconch/github-accel-loon/__SHA__/github-accel-rewrite.js, requires-body=false, timeout=10, tag=GitHub下载加速, enable=true
+
+[Mitm]
+# HTTPS 改写必须先解密；%APPEND% 表示追加到现有 MITM 列表
+hostname = %APPEND% github.com, raw.githubusercontent.com, codeload.github.com, gist.githubusercontent.com
