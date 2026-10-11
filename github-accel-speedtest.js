@@ -118,7 +118,7 @@ function num(name) {
 }
 
 function log() {
-  if (!flag('debug')) return;
+  // 无条件输出到 Loon 脚本页：否则页面全程空白，无法判断脚本是否在跑
   try {
     var s = '[GH加速]';
     for (var i = 0; i < arguments.length; i++) s += ' ' + arguments[i];
