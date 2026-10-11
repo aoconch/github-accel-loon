@@ -21,6 +21,8 @@
  *   speedCount=4             进入速度测试的节点数量
  *   speedTimeout=10000       速度测试超时(ms)
  *   keepRatio=0.3            稳定性：旧节点指标在新最优的 1.3 倍以内则不切换
+ *   mode=fast|full           fast=仅按延迟选节点(默认，快，约15~30s)；full=额外真实下载测速按 Mbps 排名
+ *   latencyMinBytes=2048     延迟测试中响应小于此值(字节)视为错误页/半截响应，判为不可达
  *   notify=true              是否发送 iOS 通知
  *   debug=false              是否输出详细日志到 Loon 日志
  */
@@ -73,11 +75,13 @@ var DEFAULTS = {
   includeSearch: 'true',
   latencyTimeout: '2500',
   latencyPassMax: '2500',
+  latencyMinBytes: '2048',
   speedCount: '4',
   speedTimeout: '10000',
   keepRatio: '0.3',
   notify: 'true',
-  debug: 'false'
+  debug: 'false',
+  mode: 'fast'
 };
 
 function parseArgument() {
@@ -283,11 +287,12 @@ function testLatency(domains) {
   var finished = 0;
   log('延迟测试开始，共 ' + total + ' 个节点，超时 ' + timeout + 'ms');
 
-  return pool(domains, 10, function (d) {
+  var latencyMin = num('latencyMinBytes');
+  return pool(domains, 15, function (d) {
     var url = 'https://' + d + '/' + img + '&r=' + Math.random().toString(36).slice(2, 8);
     return httpGet(url, timeout).then(function (r) {
-      // 镜像可能不回 200 但内容正确；只要拿到 body 就认为可达
-      var ok = !r.err && r.bytes > 0 && r.status !== 404 && r.status !== 403;
+      // 轻量存活校验：响应体积过小(错误页/半截响应)直接判不可达，避免「延迟快但下载坏」的节点当选
+      var ok = !r.err && r.bytes >= latencyMin && r.status !== 404 && r.status !== 403;
       return { domain: d, latency: ok ? r.ms : -1, status: r.status, bytes: r.bytes, err: r.err || '' };
     }).catch(function () {
       return { domain: d, latency: -1, status: 0, bytes: 0, err: 'exception' };
@@ -327,6 +332,50 @@ function testSpeed(domains) {
       return { domain: d, speed: -1, ms: 0, bytes: 0 };
     });
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* 2.5 收尾：稳定性保护 + 写存储 + 通知                                  */
+/* ------------------------------------------------------------------ */
+function finalize(best, ok, tested, domains, alive, byDomain, t0) {
+  var prev = readJSON(KEY_BEST);
+  var keepRatio = num('keepRatio');
+  if (prev && prev.domain && prev.domain !== best.domain) {
+    var prevNow = byDomain[prev.domain];
+    if (prevNow && prevNow.latency > 0) {
+      var better = false;
+      if (best.speed > 0 && prevNow.speed > 0) better = best.speed > prevNow.speed * (1 + keepRatio);
+      else better = best.latency < prevNow.latency * (1 - keepRatio);
+      if (!better) {
+        log('提升不足，保留原节点 ' + prev.domain);
+        best = { domain: prev.domain, latency: prevNow.latency, speed: prevNow.speed || -1 };
+      }
+    }
+  }
+
+  var picks = ok.slice(0, 5).concat(
+    tested.filter(function (x) { return x.speed <= 0; }).slice(0, 3)
+  ).slice(0, 5);
+  if (!picks.length) picks = [best];
+
+  var payload = {
+    domain: best.domain, latency: best.latency, speed: best.speed,
+    testedAt: Date.now(), total: domains.length, alive: alive.length, picks: picks
+  };
+  writeJSON(KEY_BEST, payload);
+
+  var stat = readJSON(KEY_STAT) || {};
+  stat.lastRunAt = Date.now(); stat.total = domains.length; stat.alive = alive.length;
+  stat.winner = best.domain; stat.scanned = alive.length;
+  if (!prev || prev.domain !== best.domain) stat.switchedAt = Date.now();
+  writeJSON(KEY_STAT, stat);
+
+  var cost = ((Date.now() - t0) / 1000).toFixed(1);
+  var content = '延迟 ' + best.latency + 'ms' +
+    (best.speed > 0 ? ' · 速度 ' + best.speed + 'Mbps' : '（快速模式·未测速）') +
+    '\n可用 ' + alive.length + '/' + domains.length + ' 个节点，耗时 ' + cost + 's' +
+    (ok.length > 1 ? '\n备选：' + ok.slice(1, 4).map(function (x) { return x.domain; }).join(' ') : '');
+  finish(true, content, best.domain + ' 最优');
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,76 +438,40 @@ function main() {
       }
       if (!candidates.length) candidates = alive.slice(0, 3);
 
-      var speedList = candidates.slice(0, Math.max(1, num('speedCount'))).map(function (x) { return x.domain; });
-      log('进入速度测试：' + speedList.join(', '));
+      var byDomain = {};
+      for (var i = 0; i < alive.length; i++) byDomain[alive[i].domain] = alive[i];
 
-      return testSpeed(speedList).then(function (sp) {
-        var byDomain = {};
-        for (var i = 0; i < alive.length; i++) byDomain[alive[i].domain] = alive[i];
-        for (var j = 0; j < sp.length; j++) {
-          if (byDomain[sp[j].domain] && sp[j].speed > 0) byDomain[sp[j].domain].speed = sp[j].speed;
-        }
+      var doSpeed = (String(cfg('mode')).toLowerCase() === 'full');
 
-        var tested = candidates.map(function (x) {
-          var a = byDomain[x.domain];
-          return { domain: x.domain, latency: a.latency, speed: a.speed || -1 };
-        });
-
-        var ok = tested.filter(function (x) { return x.speed > 0; });
-        ok.sort(function (a, b) {
-          if (b.speed !== a.speed) return b.speed - a.speed;
-          return a.latency - b.latency;
-        });
-        var best = ok.length ? ok[0] : { domain: candidates[0].domain, latency: candidates[0].latency, speed: -1 };
-
-        // 稳定性：新最优相比旧最优提升不明显时，保留旧节点，避免频繁切换
-        var prev = readJSON(KEY_BEST);
-        var keepRatio = num('keepRatio');
-        if (prev && prev.domain && prev.domain !== best.domain) {
-          var prevNow = byDomain[prev.domain];
-          if (prevNow && prevNow.latency > 0) {
-            var better = false;
-            if (best.speed > 0 && prevNow.speed > 0) better = best.speed > prevNow.speed * (1 + keepRatio);
-            else better = best.latency < prevNow.latency * (1 - keepRatio);
-            if (!better) {
-              log('提升不足，保留原节点 ' + prev.domain);
-              best = { domain: prev.domain, latency: prevNow.latency, speed: prevNow.speed || -1 };
-            }
+      if (doSpeed) {
+        // 完整模式：真实下载测速，按 Mbps 排名
+        var speedList = candidates.slice(0, Math.max(1, num('speedCount'))).map(function (x) { return x.domain; });
+        log('进入速度测试：' + speedList.join(', '));
+        return testSpeed(speedList).then(function (sp) {
+          for (var jj = 0; jj < sp.length; jj++) {
+            if (byDomain[sp[jj].domain] && sp[jj].speed > 0) byDomain[sp[jj].domain].speed = sp[jj].speed;
           }
-        }
-
-        var picks = ok.slice(0, 5).concat(
-          tested.filter(function (x) { return x.speed <= 0; }).slice(0, 3)
-        ).slice(0, 5);
-        if (!picks.length) picks = [best];
-
-        var payload = {
-          domain: best.domain,
-          latency: best.latency,
-          speed: best.speed,
-          testedAt: Date.now(),
-          total: domains.length,
-          alive: alive.length,
-          picks: picks
-        };
-        writeJSON(KEY_BEST, payload);
-
-        var stat = readJSON(KEY_STAT) || {};
-        stat.lastRunAt = Date.now();
-        stat.total = domains.length;
-        stat.alive = alive.length;
-        stat.winner = best.domain;
-        stat.scanned = alive.length;
-        if (!prev || prev.domain !== best.domain) stat.switchedAt = Date.now();
-        writeJSON(KEY_STAT, stat);
-
-        var cost = ((Date.now() - t0) / 1000).toFixed(1);
-        var content = '延迟 ' + best.latency + 'ms' +
-          (best.speed > 0 ? ' · 速度 ' + best.speed + 'Mbps' : '') +
-          '\n可用 ' + alive.length + '/' + domains.length + ' 个节点，耗时 ' + cost + 's' +
-          (ok.length > 1 ? '\n备选：' + ok.slice(1, 4).map(function (x) { return x.domain; }).join(' ') : '');
-        finish(true, content, best.domain + ' 最优');
-      });
+          var tested = candidates.map(function (x) {
+            var a = byDomain[x.domain];
+            return { domain: x.domain, latency: a.latency, speed: a.speed || -1 };
+          });
+          var ok = tested.filter(function (x) { return x.speed > 0; });
+          ok.sort(function (a, b) {
+            if (b.speed !== a.speed) return b.speed - a.speed;
+            return a.latency - b.latency;
+          });
+          var best = ok.length ? ok[0] : { domain: candidates[0].domain, latency: candidates[0].latency, speed: -1 };
+          finalize(best, ok, tested, domains, alive, byDomain, t0);
+        });
+      } else {
+        // 快速模式（默认）：仅按延迟选取，不做真实下载测速
+        var bestF = candidates[0];
+        var testedF = candidates.map(function (x) {
+          return { domain: x.domain, latency: x.latency, speed: -1 };
+        });
+        log('快速模式：按延迟选取，不下载测速 → ' + bestF.domain + ' ' + bestF.latency + 'ms');
+        finalize(bestF, [], testedF, domains, alive, byDomain, t0);
+      }
     });
   }).catch(function (e) {
     finish(false, '脚本异常：' + e);
