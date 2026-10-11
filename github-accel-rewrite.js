@@ -16,15 +16,19 @@
  *   - codeload.github.com/...
  *   - gist.githubusercontent.com/...
  *
+ * 排查日志：放行/改写的关键决策会【无条件】写入 Loon 日志（[GH加速改写] 前缀），
+ *   但同类原因 10 分钟内只记一次，避免刷屏。
+ *
  * 可覆盖配置（argument 或插件 #!input）：
  *   nodePolicy=DIRECT    改写后的请求走哪个策略/节点（默认 DIRECT，加速节点多为国内 CDN）
  *   enable=true          总开关
  *   maxAgeDays=30        最优节点信息超过该天数则不再改写（防止长期失效节点）
- *   debug=false          输出日志到 Loon 日志
+ *   debug=false          额外输出详细日志到 Loon 日志
  */
 
 var KEY_BEST = 'gh_accel_best';
 var KEY_STAT = 'gh_accel_stat';
+var KEY_LOGCTL = 'gh_accel_logctl';
 
 var DEFAULTS = {
   nodePolicy: 'DIRECT',
@@ -68,9 +72,25 @@ function flag(name) {
 function log() {
   if (!flag('debug')) return;
   try {
-    var s = '[GH加速改写]';
+    var s = '[GH加速改写][详细]';
     for (var i = 0; i < arguments.length; i++) s += ' ' + arguments[i];
     console.log(s);
+  } catch (e) { /* ignore */ }
+}
+
+/* 无条件限频日志：同一 key 10 分钟只输出一次（写日志 ≠ 失败静默，之前吃过 debug 开关的亏） */
+function logOnce(key, msg) {
+  try {
+    var now = Date.now();
+    var ctl = {};
+    try {
+      var s = $persistentStore.read(KEY_LOGCTL);
+      if (s) ctl = JSON.parse(s) || {};
+    } catch (e) { ctl = {}; }
+    if (ctl[key] && (now - ctl[key]) < 600000) return;
+    ctl[key] = now;
+    try { $persistentStore.write(JSON.stringify(ctl), KEY_LOGCTL); } catch (e2) { /* ignore */ }
+    console.log('[GH加速改写] ' + msg);
   } catch (e) { /* ignore */ }
 }
 
@@ -99,25 +119,31 @@ function isDownloadUrl(url) {
 
 function main() {
   try {
-    if (!flag('enable')) return pass();
+    if (!flag('enable')) { logOnce('disabled', '总开关 enable=false，未启用改写'); return pass(); }
 
     var url = (typeof $request !== 'undefined' && $request && $request.url) ? String($request.url) : '';
     if (!url) return pass();
 
     var best = readJSON(KEY_BEST);
-    if (!best || !best.domain) { log('暂无最优节点，放行'); return pass(); }
+    if (!best || !best.domain) {
+      logOnce('nobest', '暂无最优节点（先去「脚本」页运行「GitHub加速节点测速」），放行：' + url);
+      return pass();
+    }
 
     // 过期保护
     var maxAge = parseFloat(cfg('maxAgeDays')) * 86400000;
     if (best.testedAt && maxAge > 0 && (Date.now() - best.testedAt) > maxAge) {
-      log('最优节点信息已过期（' + best.domain + '），放行');
+      logOnce('expired', '最优节点信息已过期（' + best.domain + '，先重跑测速），放行：' + url);
       return pass();
     }
 
     // 已经是改写后的地址，避免二次改写
     if (url.indexOf('://' + best.domain + '/') > -1) return pass();
 
-    if (!isDownloadUrl(url)) return pass();
+    if (!isDownloadUrl(url)) {
+      logOnce('nomatch', 'URL 不在下载白名单，放行：' + url);
+      return pass();
+    }
 
     var newUrl = 'https://' + best.domain + '/' + url;
     var policy = String(cfg('nodePolicy') || 'DIRECT');
@@ -130,7 +156,8 @@ function main() {
     stat.lastAt = Date.now();
     writeJSON(KEY_STAT, stat);
 
-    log('改写 → ' + best.domain + ' | ' + url);
+    logOnce('rewrite', '✓ 已改写 → ' + best.domain + ' | ' + url);
+    log('改写 → ' + best.domain + ' | ' + newUrl);
     $done({ url: newUrl, node: policy });
   } catch (e) {
     // 任何异常都必须放行，不能阻断用户下载

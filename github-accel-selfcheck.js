@@ -6,10 +6,14 @@
  *   ② 最优节点已失效（存的域名现在拉不动）
  *   ③ 链路正常 → 那问题就在 MITM / 脚本触发层（给出具体检查项）
  *
+ * 另外会显示改写脚本的累计统计（gh_accel_stat）：
+ *   如果「链路正常」但 rewriteCount=0，基本可断定改写脚本从未触发（MITM / 插件问题）。
+ *
  * 无参数，直接运行即可。
  */
 
 var KEY_BEST = 'gh_accel_best';
+var KEY_STAT = 'gh_accel_stat';
 var UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
 /* 用于链路自检的小文件（与测速脚本同款） */
@@ -50,6 +54,13 @@ function httpGet(url, timeoutMs) {
   });
 }
 
+function statText() {
+  var st = readJSON(KEY_STAT);
+  if (!st || !st.rewriteCount) return '改写统计：0 次（本次会话内改写脚本从未生效过）';
+  var ago = st.lastAt ? Math.max(1, Math.round((Date.now() - st.lastAt) / 60000)) : '?';
+  return '改写统计：已改写 ' + st.rewriteCount + ' 次，最近一次 ' + ago + ' 分钟前 → ' + (st.lastDomain || '?');
+}
+
 function finish(content, subtitle) {
   try { $notification.post('GitHub 加速自检', subtitle || '', content || ''); } catch (e) { /* ignore */ }
   try { console.log('[GH加速自检] ' + subtitle + ' | ' + content); } catch (e) { /* ignore */ }
@@ -64,7 +75,7 @@ function main() {
     finish(
       '✗ 还没跑过测速，这就是改写不生效的原因。\n' +
       '改写脚本读不到最优节点时会直接放行（不报错、也不加速）。\n' +
-      '现在去「脚本」页运行「GitHub加速节点测速」，弹通知后再试下载。'
+      '现在去「脚本」页运行「GitHub加速节点测速」，弹通知后再试下载。\n\n' + statText()
     );
     return;
   }
@@ -75,7 +86,8 @@ function main() {
   // ---- ② 实测加速链路（DIRECT 直连最优节点拉 GitHub 文件）----
   httpGet('https://' + best.domain + '/' + TEST_URL + '?t=' + Date.now(), 8000).then(function (r) {
     var head = '当前最优：' + best.domain + '（' + ageTxt + '测速）\n' +
-      '记录指标：延迟 ' + best.latency + 'ms' + (best.speed > 0 ? ' · ' + best.speed + 'Mbps' : '') + '\n';
+      '记录指标：延迟 ' + best.latency + 'ms' + (best.speed > 0 ? ' · ' + best.speed + 'Mbps' : '') + '\n' +
+      statText() + '\n';
 
     if (r.ok && r.bytes > 0) {
       finish(
@@ -85,7 +97,7 @@ function main() {
         '1. MITM 页面的 hostname 里是否含 raw.githubusercontent.com、github.com、codeload.github.com\n' +
         '2. 证书是否已安装并在 iOS「证书信任设置」中开启信任\n' +
         '3. 插件里「GitHub下载加速」这条 http-request 脚本是否为启用状态\n' +
-        '4. 是否装的是最新版插件（点插件右上的更新）',
+        '4. 是否装的是最新版插件（删除旧插件后重新导入）',
         '链路正常'
       );
     } else {
