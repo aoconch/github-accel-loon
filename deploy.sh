@@ -32,7 +32,7 @@ echo "[*] 当前账号：$USER"
 if grep -q '__SHA__' "$PLUGIN"; then
   echo "[*] 插件中已是占位符 __SHA__"
 else
-  _restored=$(sed -E 's#(raw\.githubusercontent\.com/[^/]+/[^/]+/)[0-9a-f]{7,40}(/)#\1__SHA__\2#g' "$PLUGIN")
+  _restored=$(sed -E -e 's#(raw\.githubusercontent\.com/[^/]+/[^/]+/)[0-9a-f]{7,40}(/)#\1__SHA__\2#g' -e 's#(jsdelivr\.net/gh/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+)@?[0-9a-f]{7,40}(/)#\1@__SHA__\2#g' "$PLUGIN")
   printf '%s\n' "$_restored" > "$PLUGIN"
   echo "[*] 已把旧的固定 SHA 还原成 __SHA__"
 fi
@@ -81,11 +81,13 @@ git push -u origin "$BRANCH" 2>&1 | tail -5
 gh repo edit "$USER/$REPO" \
   --add-topic loon --add-topic loon-plugin --add-topic github-accelerator >/dev/null 2>&1 || true
 
-PLUGIN_URL="https://raw.githubusercontent.com/$USER/$REPO/$BRANCH/$PLUGIN"
+PLUGIN_URL="https://fastly.jsdelivr.net/gh/$USER/$REPO@$BRANCH/$PLUGIN"
+RAW_URL="https://raw.githubusercontent.com/$USER/$REPO/$BRANCH/$PLUGIN"
 echo ""
 echo "==================== 发布完成 ===================="
 echo "仓库：      https://github.com/$USER/$REPO"
-echo "Loon 导入： $PLUGIN_URL"
+echo "Loon 导入（推荐，国内可直连）： $PLUGIN_URL"
+echo "Loon 导入（备用）： $RAW_URL"
 echo "脚本固定于： $SHA"
 echo ""
 echo "下一步：Loon → 配置 → 插件 → + → 粘贴上面的导入地址"

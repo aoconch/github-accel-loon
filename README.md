@@ -21,10 +21,13 @@ Loon 插件：**定时从 [github.akams.cn](https://github.akams.cn/) 的加速�
 Loon → 配置 → 插件 → 右上角 `+` → 添加：
 
 ```
-https://raw.githubusercontent.com/aoconch/github-accel-loon/main/github-accel.plugin
+https://fastly.jsdelivr.net/gh/aoconch/github-accel-loon@main/github-accel.plugin
 ```
 
-或直接点这里安装：<https://raw.githubusercontent.com/aoconch/github-accel-loon/main/github-accel.plugin>
+或直接点这里安装：<https://fastly.jsdelivr.net/gh/aoconch/github-accel-loon@main/github-accel.plugin>
+
+> **为什么用 jsDelivr 而不是 raw.githubusercontent.com？**
+> 如果你的 Loon 配置里 raw.githubusercontent.com 走了某个代理策略，而该节点拉 raw 失败，Loon 会连**脚本本体**都下载不到——表现为插件/脚本页打开一片空白。jsDelivr 国内可直连，作为脚本分发源稳定得多（脚本本体仍固定在不可变 commit SHA 上）。
 
 ### 2. 开启 MITM 并信任证书
 
