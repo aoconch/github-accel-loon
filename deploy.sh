@@ -81,13 +81,18 @@ git push -u origin "$BRANCH" 2>&1 | tail -5
 gh repo edit "$USER/$REPO" \
   --add-topic loon --add-topic loon-plugin --add-topic github-accelerator >/dev/null 2>&1 || true
 
-PLUGIN_URL="https://fastly.jsdelivr.net/gh/$USER/$REPO@$BRANCH/$PLUGIN"
+FINAL_SHA=$(git rev-parse HEAD)
+PLUGIN_URL="https://fastly.jsdelivr.net/gh/$USER/$REPO@$FINAL_SHA/$PLUGIN"
+PLUGIN_URL_MAIN="https://fastly.jsdelivr.net/gh/$USER/$REPO@$BRANCH/$PLUGIN"
+RAW_URL="https://raw.githubusercontent.com/$USER/$REPO/$BRANCH/$PLUGIN"
 RAW_URL="https://raw.githubusercontent.com/$USER/$REPO/$BRANCH/$PLUGIN"
 echo ""
 echo "==================== 发布完成 ===================="
 echo "仓库：      https://github.com/$USER/$REPO"
 echo "Loon 导入（推荐，国内可直连）： $PLUGIN_URL"
+echo "Loon 导入（@main，可能被 jsDelivr 缓存延迟）： $PLUGIN_URL_MAIN"
 echo "Loon 导入（备用）： $RAW_URL"
+echo "插件最终 commit： $FINAL_SHA"
 echo "脚本固定于： $SHA"
 echo ""
 echo "下一步：Loon → 配置 → 插件 → + → 粘贴上面的导入地址"
