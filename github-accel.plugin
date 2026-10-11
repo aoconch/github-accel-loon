@@ -34,6 +34,7 @@
 
 [IP Rewrite]
 10.7.0.1 = reflect
+10.7.1.1 = reflect
 
 [Script]
 # ① 定时测速（也可在 Loon「脚本」页手动点运行）
