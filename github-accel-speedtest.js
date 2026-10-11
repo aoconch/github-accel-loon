@@ -16,10 +16,10 @@
  *   remoteList=true|false    是否实时从 akams 同步节点列表（失败自动回落内置列表）
  *   listTtlHours=12          节点列表缓存有效期(小时)
  *   includeSearch=true       是否把「测绘」类节点也纳入测速
- *   latencyTimeout=3000      单节点延迟测试超时(ms)
+ *   latencyTimeout=2500      单节点延迟测试超时(ms)
  *   latencyPassMax=2500      延迟高于该值(ms)的节点不进入速度测试
  *   speedCount=4             进入速度测试的节点数量
- *   speedTimeout=15000       速度测试超时(ms)
+ *   speedTimeout=10000       速度测试超时(ms)
  *   keepRatio=0.3            稳定性：旧节点指标在新最优的 1.3 倍以内则不切换
  *   notify=true              是否发送 iOS 通知
  *   debug=false              是否输出详细日志到 Loon 日志
@@ -71,10 +71,10 @@ var DEFAULTS = {
   remoteList: 'true',
   listTtlHours: '12',
   includeSearch: 'true',
-  latencyTimeout: '3000',
+  latencyTimeout: '2500',
   latencyPassMax: '2500',
   speedCount: '4',
-  speedTimeout: '15000',
+  speedTimeout: '10000',
   keepRatio: '0.3',
   notify: 'true',
   debug: 'false'
@@ -279,9 +279,11 @@ function syncNodes() {
 function testLatency(domains) {
   var img = pick(LATENCY_IMAGES) + '?t=' + Date.now();
   var timeout = num('latencyTimeout');
-  log('延迟测试开始，共 ' + domains.length + ' 个节点，超时 ' + timeout + 'ms');
+  var total = domains.length;
+  var finished = 0;
+  log('延迟测试开始，共 ' + total + ' 个节点，超时 ' + timeout + 'ms');
 
-  return pool(domains, 8, function (d) {
+  return pool(domains, 10, function (d) {
     var url = 'https://' + d + '/' + img + '&r=' + Math.random().toString(36).slice(2, 8);
     return httpGet(url, timeout).then(function (r) {
       // 镜像可能不回 200 但内容正确；只要拿到 body 就认为可达
@@ -289,6 +291,10 @@ function testLatency(domains) {
       return { domain: d, latency: ok ? r.ms : -1, status: r.status, bytes: r.bytes, err: r.err || '' };
     }).catch(function () {
       return { domain: d, latency: -1, status: 0, bytes: 0, err: 'exception' };
+    }).then(function (res) {
+      finished++;
+      if (finished % 20 === 0 || finished === total) log('延迟测试进度：' + finished + '/' + total);
+      return res;
     });
   });
 }
@@ -296,6 +302,9 @@ function testLatency(domains) {
 /* ------------------------------------------------------------------ */
 /* 3. 测速度                                                            */
 /* ------------------------------------------------------------------ */
+/* 速度测试最小有效字节数：SPEED_FILE 约 1.7MB，低于此值基本是错误页/半截响应 */
+var SPEED_MIN_BYTES = 200 * 1024;
+
 function testSpeed(domains) {
   var timeout = num('speedTimeout');
   return pool(domains, 2, function (d) {
@@ -306,6 +315,10 @@ function testSpeed(domains) {
       if (!r.ok || !r.bytes) {
         log('速度测试失败 ' + d + '：' + (r.err || ('HTTP ' + r.status)));
         return { domain: d, speed: -1, ms: ms, bytes: r.bytes || 0 };
+      }
+      if (r.bytes < SPEED_MIN_BYTES) {
+        log('速度测试失败 ' + d + '：响应过小（' + r.bytes + 'B），疑似错误页');
+        return { domain: d, speed: -1, ms: ms, bytes: r.bytes };
       }
       var mbps = (r.bytes * 8) / (ms / 1000) / 1000000;
       log('速度 ' + d + ' = ' + mbps.toFixed(2) + ' Mbps (' + r.bytes + 'B / ' + ms + 'ms)');
