@@ -32,13 +32,6 @@
 #!input = speedCount
 #!input = nodePolicy
 
-[General]
-include-tun = 10.7.0.1/32
-
-[IP Rewrite]
-10.7.0.1 = reflect
-10.7.1.1 = reflect
-
 [Script]
 # ① 定时测速（也可在 Loon「脚本」页手动点运行）
 cron "0 */6 * * *" script-path=https://fastly.jsdelivr.net/gh/aoconch/github-accel-loon@784c78acecd8147178e46561cf95d131b663047a/github-accel-speedtest.js, tag=GitHub加速节点测速, timeout=300, enable=true
